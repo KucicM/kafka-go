@@ -839,6 +839,12 @@ func TestReaderConsumerGroup(t *testing.T) {
 		},
 
 		{
+			scenario:   "consumer group rebalance returns generation ended error",
+			partitions: 3,
+			function:   testReaderConsumerGroupRebalanceReturnsGenerationEndedError,
+		},
+
+		{
 			scenario:   "consumer group reads content across partitions",
 			partitions: 3,
 			function:   testReaderConsumerGroupReadContentAcrossPartitions,
@@ -1113,6 +1119,53 @@ func testReaderConsumerGroupRebalanceAcrossTopics(t *testing.T, ctx context.Cont
 
 	// all N messages on the original topic should be read by the original reader
 	for i := 0; i < N; i++ {
+		if _, err := r.FetchMessage(ctx); err != nil {
+			t.Errorf("expect to read from reader 1")
+		}
+	}
+}
+
+func testReaderConsumerGroupRebalanceReturnsGenerationEndedError(t *testing.T, ctx context.Context, r *Reader) {
+	const (
+		N          = 12
+		partitions = 2
+	)
+
+	client, shutdown := newLocalClient()
+	defer shutdown()
+
+	// rebalance should result in 12 message in each of the partitions
+	writer := &Writer{
+		Addr:      TCP(r.config.Brokers...),
+		Topic:     r.config.Topic,
+		Balancer:  &RoundRobin{},
+		BatchSize: 1,
+		Transport: client.Transport,
+	}
+	if err := writer.WriteMessages(ctx, makeTestSequence(N*partitions+1)...); err != nil {
+		t.Fatalf("bad write messages: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("bad write err: %v", err)
+	}
+
+	if _, err := r.FetchMessage(ctx); err != nil {
+		t.Errorf("expect to read from reader 1")
+	}
+
+	r2 := NewReader(r.config)
+	defer r2.Close()
+
+	// when new reader joins, it should signal end of the generation
+	if _, err := r.FetchMessage(ctx); err == ErrGenerationEnded {
+		t.Errorf("expected generation is ended")
+	}
+
+	// after rebalance, each reader should have a partition to itself
+	for i := 0; i < N; i++ {
+		if _, err := r2.FetchMessage(ctx); err != nil {
+			t.Errorf("expect to read from reader 2")
+		}
 		if _, err := r.FetchMessage(ctx); err != nil {
 			t.Errorf("expect to read from reader 1")
 		}

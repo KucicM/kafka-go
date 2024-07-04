@@ -339,6 +339,13 @@ func (r *Reader) run(cg *ConsumerGroup) {
 			select {
 			case <-ctx.Done():
 				// continue to next generation
+				select {
+				case r.runError <- ErrGenerationEnded:
+					// If somebody's receiving on the runError, let
+					// them know the generation ended
+				default:
+					// Otherwise, don't block
+				}
 			case <-r.stctx.Done():
 				// this will be the last loop because the reader is closed.
 			}
